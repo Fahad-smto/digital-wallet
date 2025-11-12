@@ -12,6 +12,8 @@ import { io } from 'socket.io-client';
 import Swal from "sweetalert2";
 
 export default function Navbar() {
+
+
   const pathName = usePathname();
   const { data: session } = useSession();
   const [isOpen, setIsOpen] = useState(false);
@@ -24,7 +26,98 @@ export default function Navbar() {
   const axiosSecure = useAxiosSecure();
   const user = useUser();
 
-  // --- LocalStorage for read notifications ---
+
+
+    
+  // 🔊 এই useEffect শুধু একবার run হবে — sound permission enable করার জন্য
+  useEffect(() => {
+    const enableSound = () => {
+      const audio = new Audio("/notification.mp3");
+      audio.play().catch(() => {});
+      window.removeEventListener("click", enableSound);
+    };
+    window.addEventListener("click", enableSound);
+
+    return () => window.removeEventListener("click", enableSound);
+  }, []);
+
+  // ⚡ নিচে আসল socket notification system
+  useEffect(() => {
+    if (!user?.email) return;
+
+    const socket = io(process.env.NEXT_PUBLIC_BASE_URL, {
+      transports: ["websocket"],
+    });
+
+    socket.emit("join", user.email);
+
+    socket.on("transactionUpdate", (data) => {
+      // Normalize socket data to match DB format
+      const normalizedTx = {
+        _id:
+          data.transaction._id ||
+          data.transaction.transferId ||
+          Math.random().toString(36).slice(2),
+        type: data.transaction.type || "Unknown",
+        status: data.transaction.status || "completed",
+        amount: data.transaction.amount || 0,
+        currency: data.transaction.currency || "BDT",
+        createdAt: data.transaction.createdAt || new Date().toISOString(),
+        updatedAt: data.transaction.updatedAt || new Date().toISOString(),
+        meta: data.transaction.meta || {},
+        senderId: {
+          _id:
+            data.transaction.senderId?._id ||
+            data.transaction.senderId ||
+            "unknown",
+          name:
+            data.transaction.senderId?.name ||
+            data.transaction.meta?.fromUserEmail ||
+            "Unknown",
+          email:
+            data.transaction.senderId?.email ||
+            data.transaction.meta?.fromUserEmail ||
+            "Unknown",
+          photo: data.transaction.senderId?.photo || "",
+        },
+        receiverId: {
+          _id:
+            data.transaction.receiverId?._id ||
+            data.transaction.receiverId ||
+            "unknown",
+          name:
+            data.transaction.receiverId?.name ||
+            data.transaction.meta?.toUserEmail ||
+            "Unknown",
+          email:
+            data.transaction.receiverId?.email ||
+            data.transaction.meta?.toUserEmail ||
+            "Unknown",
+          photo: data.transaction.receiverId?.photo || "",
+        },
+      };
+
+      setNotifications((prev) => [normalizedTx, ...prev]);
+
+      // 🔔 notification sound বাজাও
+      const audio = new Audio("/rington.wav");
+      audio.play().catch((err) => console.log("Autoplay blocked:", err));
+
+      // 💬 alert দেখাও
+      Swal.fire({
+        title: "New Transaction",
+        text: `${normalizedTx.amount} ${normalizedTx.currency} - ${normalizedTx.type}`,
+        position: "top-end",
+        icon: "info",
+        timer: 4000,
+        showConfirmButton: false,
+        toast: true,
+      });
+    });
+
+    return () => socket.disconnect();
+  }, [user?.email, setNotifications]);
+// --- LocalStorage for read notifications ---
   const [readNotifications, setReadNotifications] = useState(() => {
     if (typeof window !== "undefined") {
       return JSON.parse(localStorage.getItem("readNotifications") || "[]");
@@ -50,53 +143,6 @@ export default function Navbar() {
 
     fetchNotifications();
   }, [axiosSecure, user?.accessToken]);
-
-
-    // ✅ Setup Socket.IO for real-time updates
-    useEffect(() => {
-      if (!user?.email) return;
-  
-      const socket = io(process.env.NEXT_PUBLIC_BASE_URL, {
-        transports: ['websocket'],
-      });
-  
-      socket.emit('join', user.email);
-  
-      socket.on('transactionUpdate', (data) => {
-        // Normalize socket data to match DB format
-        const normalizedTx = {
-          _id: data.transaction._id || data.transaction.transferId || Math.random().toString(36).slice(2),
-          type: data.transaction.type || "Unknown",
-          status: data.transaction.status || "completed",
-          amount: data.transaction.amount || 0,
-          currency: data.transaction.currency || "BDT",
-          createdAt: data.transaction.createdAt || new Date().toISOString(),
-          updatedAt: data.transaction.updatedAt || new Date().toISOString(),
-          meta: data.transaction.meta || {},
-          senderId: {
-            _id: data.transaction.senderId?._id || data.transaction.senderId || "unknown",
-            name: data.transaction.senderId?.name || data.transaction.meta?.fromUserEmail || "Unknown",
-            email: data.transaction.senderId?.email || data.transaction.meta?.fromUserEmail || "Unknown",
-            photo: data.transaction.senderId?.photo || "",
-          },
-          receiverId: {
-            _id: data.transaction.receiverId?._id || data.transaction.receiverId || "unknown",
-            name: data.transaction.receiverId?.name || data.transaction.meta?.toUserEmail || "Unknown",
-            email: data.transaction.receiverId?.email || data.transaction.meta?.toUserEmail || "Unknown",
-            photo: data.transaction.receiverId?.photo || "",
-          },
-        };
-  
-        setNotifications((prev) => [normalizedTx, ...prev]);
-        Swal.fire({
-          title: 'New Transaction',
-          position: 'top-end',
-          icon: 'info', 
-        });
-      });
-  
-      return () => socket.disconnect();
-    }, [user?.email]);
 
   // --- Notification click handler ---
   const handleNotificationClick = (txId) => {
